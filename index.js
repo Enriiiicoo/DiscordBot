@@ -572,6 +572,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
+// Cleanup expired verifications every 30 seconds
+setInterval(async () => {
+  const connection = await pool.getConnection();
+  try {
+    const [result] = await connection.execute(
+      `DELETE FROM mta_verifications WHERE expires_at <= NOW()`
+    );
+
+    if (result.affectedRows > 0) {
+      console.log(`[Verification Cleanup] Removed ${result.affectedRows} expired verification(s).`);
+      // Optionally, send a log to Discord channel here
+      // e.g.:
+      // const logChannel = await client.channels.fetch(process.env.LOG_CHANNEL_ID);
+      // if (logChannel) logChannel.send(`Removed ${result.affectedRows} expired verifications.`);
+    }
+  } catch (err) {
+    console.error("[Verification Cleanup] Error:", err);
+  } finally {
+    connection.release();
+  }
+}, 30000); // runs every 30 seconds
+
 // Express webserver to keep bot alive
 const app = express();
 
@@ -588,4 +610,51 @@ client.login(process.env.DISCORD_TOKEN).catch((error) => {
   logError("botLogin", error);
   console.error("❌ Failed to login to Discord");
   process.exit(1);
+});
+
+
+app.use(express.json());
+
+app.post("/api/player-join", async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    const expected = `Bearer ${process.env.JOIN_WEBHOOK_SECRET}`;
+
+    if (auth !== expected) return res.status(403).send("Forbidden");
+
+    const { nickname, serial, ip } = req.body;
+
+    if (!nickname || !serial || !ip)
+      return res.status(400).send("Missing required fields");
+
+    const [rows] = await pool.execute(
+      `SELECT discord_id FROM mta_whitelist WHERE mta_serial = ? LIMIT 1`,
+      [serial]
+    );
+
+    const discordId = rows.length ? rows[0].discord_id : null;
+
+    const embed = new EmbedBuilder()
+      .setTitle("🟢 Player Joined Server")
+      .setColor(0x00bfff)
+      .addFields(
+        { name: "👤 Nickname", value: nickname, inline: true },
+        { name: "🔐 Serial", value: `\`${serial}\``, inline: true },
+        { name: "🌐 IP", value: ip, inline: true },
+        {
+          name: "🤖 Discord",
+          value: discordId ? `<@${discordId}> (\`${discordId}\`)` : "❌ Not Linked",
+          inline: true
+        }
+      )
+      .setTimestamp();
+
+    const logChannel = await client.channels.fetch(process.env.JOIN_LOG_CHANNEL_ID);
+    await logChannel.send({ embeds: [embed] });
+
+    res.status(200).send("Logged");
+  } catch (error) {
+    console.error("Error logging join:", error);
+    res.status(500).send("Error logging join");
+  }
 });
