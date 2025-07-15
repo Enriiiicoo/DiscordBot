@@ -14,6 +14,7 @@ const {
   EmbedBuilder,
   Events
 } = require('discord.js');
+
 const mysql = require('mysql2/promise');
 
 const pool = mysql.createPool({
@@ -247,14 +248,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
 // ✅ FULLY FIXED MTA:SA DISCORD BOT WITH WORKING COMMANDS
 const keep_alive = require('./keep_alive.js')
-const {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  Client,
-  GatewayIntentBits,
-  EmbedBuilder,
-} = require("discord.js");
 const mysql = require("mysql2/promise");
 const axios = require("axios");
 
