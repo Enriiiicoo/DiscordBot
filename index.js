@@ -72,7 +72,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const connection = await pool.getConnection();
 
   try {
-    // Button: verify_mta
+    // --- BUTTON: verify_mta ---
     if (interaction.isButton() && interaction.customId === "verify_mta") {
       await interaction.deferReply({ ephemeral: true });
       const [whitelist] = await connection.execute(
@@ -97,7 +97,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
     }
 
-    // Command: whitelist
+    // --- COMMAND: whitelist ---
     if (interaction.isCommand() && interaction.commandName === "whitelist") {
       if (!hasAdminRole(interaction.member)) {
         return safeReply(interaction, "❌ You do not have permission to use this command.");
@@ -125,18 +125,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .addFields(
               { name: "MTA Serial", value: serial, inline: true },
               { name: "Discord User", value: `<@${discordId}>`, inline: true },
-              {
-                name: "Whitelisted by",
-                value: `<@${interaction.user.id}>`,
-                inline: true,
-              },
+              { name: "Whitelisted by", value: `<@${interaction.user.id}>`, inline: true }
             ),
         ],
         ephemeral: true,
       });
     }
 
-    // Command: unwhitelist
+    // --- COMMAND: unwhitelist ---
     if (interaction.isCommand() && interaction.commandName === "unwhitelist") {
       if (!hasAdminRole(interaction.member)) {
         return safeReply(interaction, "❌ You do not have permission to use this command.");
@@ -180,7 +176,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    // Command: removeverification
+    // --- COMMAND: removeverification ---
     if (interaction.isCommand() && interaction.commandName === "removeverification") {
       if (!hasAdminRole(interaction.member)) {
         return safeReply(interaction, "❌ You do not have permission to use this command.");
@@ -200,7 +196,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    // Command: whitelistinfo
+    // --- COMMAND: whitelistinfo ---
     if (interaction.isCommand() && interaction.commandName === "whitelistinfo") {
       if (!hasAdminRole(interaction.member)) {
         return safeReply(interaction, "❌ You do not have permission to use this command.");
@@ -232,11 +228,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (i === 0)
           await interaction.reply({ embeds: [embed], ephemeral: true });
-        else await interaction.followUp({ embeds: [embed], ephemeral: true });
+        else
+          await interaction.followUp({ embeds: [embed], ephemeral: true });
       }
     }
 
-    // Command: mtaverify
+    // --- COMMAND: mtaverify ---
     if (interaction.isCommand() && interaction.commandName === "mtaverify") {
       if (!hasAdminRole(interaction.member)) {
         return safeReply(interaction, "❌ You do not have permission to use this command.");
@@ -261,6 +258,40 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await channel.send({ embeds: [embed], components: [verifyButton] });
       return safeReply(interaction, `✅ Verification button added to ${channel}`);
     }
+
+    // --- COMMAND: verifycode ---
+    if (interaction.isCommand() && interaction.commandName === "verifycode") {
+      if (!hasAdminRole(interaction.member)) {
+        return safeReply(interaction, "❌ You don't have permission to use this command.");
+      }
+
+      const code = interaction.options.getString("code");
+      const discordId = interaction.options.getString("discord_id");
+
+      if (!code || !discordId) {
+        return safeReply(interaction, "❌ You must provide both the code and the Discord ID.");
+      }
+
+      try {
+        // Call MTA server API for verification:
+        // Replace with your MTA server HTTP API URL
+        const response = await axios.post(`http://${MTA_SERVER.host}:YOUR_HTTP_PORT/verify-code`, {
+          code,
+          discordId,
+        }, {
+          timeout: 5000,
+        });
+
+        if (response.data.success) {
+          await interaction.reply(`✅ Verification succeeded for Discord ID <@${discordId}> with code \`${code}\`.`);
+        } else {
+          await interaction.reply(`❌ Verification failed: ${response.data.message}`);
+        }
+      } catch (error) {
+        console.error("Verification API error:", error);
+        await interaction.reply("❌ Error contacting the MTA server for verification.");
+      }
+    }
   } catch (err) {
     logError("interactionHandler", err, interaction);
     if (interaction.isRepliable())
@@ -269,6 +300,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     connection.release();
   }
 });
+
 
 client.on("ready", async () => {
   console.log(`✅ Bot logged in as ${client.user.tag}`);
