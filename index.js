@@ -364,11 +364,27 @@ client.on("ready", async () => {
               type: 7,
               required: false,
             },
+            {
+              name: "verifycode",
+              description: "Verify a player's in-game code and link it to their Discord ID",
+              options: [
+                {
+                  name: "code",
+                  description: "The code shown to the player in-game",
+                  type: 3,
+                  required: true,
+                },
+                {
+                  name: "discord_id",
+                  description: "Discord user ID to link",
+                  type: 3,
+                  required: true,
+                },
+              ],
+            },
           ],
-        },
-      ],
-      process.env.GUILD_ID
-    );
+          process.env.GUILD_ID
+        );
 
     console.log("✅ Commands registered");
   } catch (error) {
