@@ -1,4 +1,3 @@
-// Discord bot with all whitelist & verification logic + all commands restored
 require("dotenv").config();
 const keep_alive = require("./keep_alive.js");
 const {
@@ -12,7 +11,6 @@ const {
   Events,
 } = require("discord.js");
 const mysql = require("mysql2/promise");
-const axios = require("axios");
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -24,11 +22,7 @@ const pool = mysql.createPool({
 });
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
   partials: [Partials.Channel],
 });
 
@@ -37,11 +31,13 @@ function hasAdminRole(member) {
 }
 
 async function safeReply(interaction, content, options = {}) {
+  const payload = typeof content === "string" ? { content, ...options } : content;
+  if (!payload.flags) payload.flags = 64; // make it ephemeral
   try {
     if (interaction.replied || interaction.deferred) {
-      return await interaction.followUp(typeof content === "string" ? { content, ...options } : content);
+      return await interaction.followUp(payload);
     }
-    return await interaction.reply(typeof content === "string" ? { content, ...options } : content);
+    return await interaction.reply(payload);
   } catch (err) {
     console.error("safeReply error:", err);
   }
@@ -52,23 +48,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   const connection = await pool.getConnection();
   try {
-    // --- Verification Button ---
+    // Button: Verify
     if (interaction.isButton() && interaction.customId === "verify_mta") {
       await interaction.deferReply({ ephemeral: true });
 
-      const [rows] = await connection.execute("SELECT mta_serial FROM mta_whitelist WHERE discord_id = ? LIMIT 1", [interaction.user.id]);
-      if (!rows.length) return interaction.editReply("❌ You must be whitelisted first.");
+      const [rows] = await connection.execute(
+        "SELECT mta_serial FROM mta_whitelist WHERE discord_id = ? LIMIT 1",
+        [interaction.user.id]
+      );
+      if (!rows.length)
+        return interaction.editReply("❌ You must be whitelisted first.");
 
-      await connection.execute(`
-        INSERT INTO mta_verifications (mta_serial, discord_id, verified_at, expires_at)
-        VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 5 MINUTE))
-        ON DUPLICATE KEY UPDATE verified_at = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE)
-      `, [rows[0].mta_serial, interaction.user.id]);
+      await connection.execute(
+        `INSERT INTO mta_verifications (mta_serial, discord_id, verified_at, expires_at)
+         VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 5 MINUTE))
+         ON DUPLICATE KEY UPDATE verified_at = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE)`,
+        [rows[0].mta_serial, interaction.user.id]
+      );
 
       return interaction.editReply("✅ Verified for 5 minutes. Join the server now.");
     }
 
-    // --- /verifycode ---
+    // Slash: /verifycode
     if (interaction.isCommand() && interaction.commandName === "verifycode") {
       const code = interaction.options.getString("code").toUpperCase();
       const discordId = interaction.options.getString("discord_id");
@@ -78,39 +79,40 @@ client.on(Events.InteractionCreate, async (interaction) => {
         [code]
       );
 
-      if (!rows.length) return safeReply(interaction, "❌ Invalid or expired code.");
+      if (!rows.length)
+        return safeReply(interaction, "❌ Invalid or expired code.");
 
       const { mta_serial, ip, nickname } = rows[0];
-      await connection.execute(
-        "UPDATE mta_whitelist SET ip = ?, nickname = ? WHERE mta_serial = ? AND discord_id = ?",
-        [ip, nickname, mta_serial, discordId]
-      );
 
-      await connection.execute(`
-        INSERT INTO verified_players (mta_serial, discord_id, ip, nickname, verified_at)
-        VALUES (?, ?, ?, ?, NOW())
-        ON DUPLICATE KEY UPDATE ip = VALUES(ip), nickname = VALUES(nickname), verified_at = NOW()
-      `, [mta_serial, discordId, ip, nickname]);
+      await connection.execute(
+        `INSERT INTO verified_players (mta_serial, discord_id, ip, nickname, verified_at)
+         VALUES (?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE ip = VALUES(ip), nickname = VALUES(nickname), verified_at = NOW()`,
+        [mta_serial, discordId, ip, nickname]
+      );
 
       await connection.execute("DELETE FROM verification_attempts WHERE code = ?", [code]);
 
-      return safeReply(interaction, `✅ Code verified and data linked to \`${mta_serial}\`.\n🕵️ Now click the **Verify** button to temporarily verify.`);
+      return safeReply(
+        interaction,
+        `✅ Code verified and linked to \`${mta_serial}\`.\nNow press the ✅ **Verify** button to complete your verification.`
+      );
     }
 
-    // --- /whitelist ---
+    // Slash: /whitelist
     if (interaction.isCommand() && interaction.commandName === "whitelist") {
       if (!hasAdminRole(interaction.member)) return safeReply(interaction, "❌ No permission.");
-
       const serial = interaction.options.getString("serial");
       const discordId = interaction.options.getString("discord_id");
 
-      await connection.execute(`
-        INSERT INTO mta_whitelist (mta_serial, discord_id, added_by)
-        VALUES (?, ?, ?)
-        ON DUPLICATE KEY UPDATE discord_id = VALUES(discord_id)
-      `, [serial, discordId, interaction.user.id]);
+      await connection.execute(
+        `INSERT INTO mta_whitelist (mta_serial, discord_id, added_by)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE discord_id = VALUES(discord_id)`,
+        [serial, discordId, interaction.user.id]
+      );
 
-      return interaction.reply({
+      return safeReply(interaction, {
         content: "✅ Whitelisted",
         embeds: [
           new EmbedBuilder().setColor(0x00ff00).addFields(
@@ -118,22 +120,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
             { name: "Discord", value: `<@${discordId}>`, inline: true }
           ),
         ],
-        ephemeral: true,
       });
     }
 
-    // --- /unwhitelist ---
+    // Slash: /unwhitelist
     if (interaction.isCommand() && interaction.commandName === "unwhitelist") {
       if (!hasAdminRole(interaction.member)) return safeReply(interaction, "❌ No permission.");
-
       const serial = interaction.options.getString("serial");
       await connection.execute("DELETE FROM mta_whitelist WHERE mta_serial = ?", [serial]);
       await connection.execute("DELETE FROM mta_verifications WHERE mta_serial = ?", [serial]);
-
-      return safeReply(interaction, `✅ Removed serial \`${serial}\` from whitelist.`);
+      return safeReply(interaction, `✅ Removed \`${serial}\` from whitelist.`);
     }
 
-    // --- /removeverification ---
+    // Slash: /removeverification
     if (interaction.isCommand() && interaction.commandName === "removeverification") {
       if (!hasAdminRole(interaction.member)) return safeReply(interaction, "❌ No permission.");
       const discordId = interaction.options.getString("discord_id");
@@ -141,11 +140,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return safeReply(interaction, `✅ Removed verification for <@${discordId}>`);
     }
 
-    // --- /whitelistinfo ---
+    // Slash: /whitelistinfo
     if (interaction.isCommand() && interaction.commandName === "whitelistinfo") {
       if (!hasAdminRole(interaction.member)) return safeReply(interaction, "❌ No permission.");
       const [rows] = await connection.execute("SELECT * FROM mta_whitelist");
-      if (!rows.length) return safeReply(interaction, "No entries.");
+
+      if (!rows.length) return safeReply(interaction, "No entries found.");
 
       const embed = new EmbedBuilder().setTitle("📋 Whitelist Info").setColor(0x0099ff);
       rows.forEach((r) => {
@@ -159,23 +159,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    // --- /mtaverify ---
+    // Slash: /mtaverify
     if (interaction.isCommand() && interaction.commandName === "mtaverify") {
       if (!hasAdminRole(interaction.member)) return safeReply(interaction, "❌ No permission.");
-
       const channel = interaction.options.getChannel("channel") || interaction.channel;
+
       const embed = new EmbedBuilder()
         .setTitle("🔗 MTA:SA Verification")
         .setColor(0x00ff00)
-        .setDescription(
-          `**Step 1:** Get a code in-game.\n**Step 2:** Use /verifycode <code>.\n**Step 3:** Press button below to temporarily verify.`
-        );
+        .setDescription("**Step 1:** Get a code in-game\n**Step 2:** Use `/verifycode <code>`\n**Step 3:** Press the ✅ **Verify** button.");
 
-      const verifyButton = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("verify_mta").setLabel("✅ Verify").setStyle(ButtonStyle.Success)
+      const verifyBtn = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("verify_mta")
+          .setLabel("✅ Verify")
+          .setStyle(ButtonStyle.Success)
       );
 
-      await channel.send({ embeds: [embed], components: [verifyButton] });
+      await channel.send({ embeds: [embed], components: [verifyBtn] });
       return safeReply(interaction, `✅ Sent verification panel to ${channel}`);
     }
   } catch (err) {
@@ -188,56 +189,62 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  await client.application.commands.set([
-    {
-      name: "whitelist",
-      description: "Whitelist a player",
-      options: [
-        { name: "serial", type: 3, description: "MTA Serial", required: true },
-        { name: "discord_id", type: 3, description: "Discord ID", required: true },
-      ],
-    },
-    {
-      name: "unwhitelist",
-      description: "Remove player from whitelist",
-      options: [
-        { name: "serial", type: 3, description: "MTA Serial", required: true },
-      ],
-    },
-    {
-      name: "removeverification",
-      description: "Remove verification",
-      options: [
-        { name: "discord_id", type: 3, description: "Discord ID", required: true },
-      ],
-    },
-    {
-      name: "verifycode",
-      description: "Link in-game code to Discord ID",
-      options: [
-        { name: "code", type: 3, description: "Verification Code", required: true },
-        { name: "discord_id", type: 3, description: "Discord ID", required: true },
-      ],
-    },
-    {
-      name: "whitelistinfo",
-      description: "View whitelist list",
-    },
-    {
-      name: "mtaverify",
-      description: "Send verify button",
-      options: [
-        { name: "channel", type: 7, description: "Target channel", required: false },
-      ],
-    },
-  ], process.env.GUILD_ID);
+  await client.application.commands.set(
+    [
+      {
+        name: "whitelist",
+        description: "Whitelist a player",
+        options: [
+          { name: "serial", type: 3, description: "MTA Serial", required: true },
+          { name: "discord_id", type: 3, description: "Discord ID", required: true },
+        ],
+      },
+      {
+        name: "unwhitelist",
+        description: "Remove player from whitelist",
+        options: [{ name: "serial", type: 3, description: "MTA Serial", required: true }],
+      },
+      {
+        name: "removeverification",
+        description: "Remove a verification",
+        options: [{ name: "discord_id", type: 3, description: "Discord ID", required: true }],
+      },
+      {
+        name: "verifycode",
+        description: "Link a code to a Discord ID",
+        options: [
+          { name: "code", type: 3, description: "Verification Code", required: true },
+          { name: "discord_id", type: 3, description: "Discord ID", required: true },
+        ],
+      },
+      {
+        name: "whitelistinfo",
+        description: "View current whitelist entries",
+      },
+      {
+        name: "mtaverify",
+        description: "Send verify button",
+        options: [
+          {
+            name: "channel",
+            type: 7, // Channel type
+            description: "Target channel",
+            required: false,
+          },
+        ],
+      },
+    ],
+    process.env.GUILD_ID
+  );
 });
 
-// Ping cleanup
+// Clean expired attempts
 setInterval(async () => {
   const connection = await pool.getConnection();
   try {
     await connection.execute("DELETE FROM verification_attempts WHERE expires_at <= NOW()");
+  } catch (e) {
+    console.error("Failed to cleanup expired codes", e);
   } finally {
     connection.release();
   }
