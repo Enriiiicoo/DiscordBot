@@ -275,7 +275,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         // Call MTA server API for verification:
         // Replace with your MTA server HTTP API URL
-        const response = await axios.post(`http://${MTA_SERVER.host}:YOUR_HTTP_PORT/verify-code`, {
+        const response = await axios.post(`http://${MTA_SERVER.host}:11970/verify-code`, {
           code,
           discordId,
         }, {
