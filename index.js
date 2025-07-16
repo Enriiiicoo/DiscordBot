@@ -480,3 +480,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
 
       return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    // /mtaverify command - sends verify button to channel
+    if (interaction.isCommand() && interaction.commandName === "mtaverify") {
+      if (!hasAdminRole(interaction.member)) return safeReply(interaction, "❌ No permission.");
+
+      const channel = interaction.options.getChannel("channel") || interaction.channel;
+
+      const verifyButton = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("verify_mta")
+          .setLabel("✅ Verify")
+          .setStyle(ButtonStyle.Success)
+      );
+
+      await channel.send({
+        content:
+          "Click the button below to verify your MTA account and link your Discord account for whitelist access.",
+        components: [verifyButton],
+      });
+
+      return safeReply(interaction, `✅ Verification button sent to ${channel}.`);
+    }
+  } catch (error) {
+    console.error("Error handling interaction:", error);
+    if (!interaction.replied) {
+      await safeReply(interaction, "❌ An error occurred while processing your request.");
+    }
+  } finally {
+    connection.release();
+  }
+});
+
+// Log in to Discord
+client.login(process.env.DISCORD_TOKEN);
