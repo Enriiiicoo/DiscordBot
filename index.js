@@ -260,55 +260,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // --- COMMAND: verifycode ---
-    if (interaction.isCommand() && interaction.commandName === "verifycode") {
-      const code = interaction.options.getString("code").toUpperCase();
-      const discordId = interaction.options.getString("discord_id");
-    
-      const connection = await pool.getConnection();
-      try {
-        // Check if code exists and is not expired
-        const [rows] = await connection.execute(
-          `SELECT mta_serial, ip, nickname FROM verification_attempts WHERE code = ? AND expires_at > NOW() LIMIT 1`,
-          [code]
-        );
-    
-        if (rows.length === 0) {
-          await interaction.reply({ content: "❌ Invalid or expired code.", ephemeral: true });
-          return;
-        }
-    
-        const { mta_serial, ip, nickname } = rows[0];
-    
-        // Move to verified_players
-        await connection.execute(
-          `INSERT INTO verified_players (mta_serial, discord_id, ip, nickname, verified_at)
-           VALUES (?, ?, ?, ?, NOW())
-           ON DUPLICATE KEY UPDATE discord_id = VALUES(discord_id), ip = VALUES(ip), nickname = VALUES(nickname), verified_at = NOW()`,
-          [mta_serial, discordId, ip, nickname]
-        );
-    
-        // Remove from verification_attempts
-        await connection.execute(
-          `DELETE FROM verification_attempts WHERE code = ?`,
-          [code]
-        );
-    
-        await interaction.reply({ content: `✅ Successfully verified serial \`${mta_serial}\` for <@${discordId}>.`, ephemeral: true });
-      catch (err) {
-        console.error("[verifycode] Error:", err);
-        await interaction.reply({ content: "❌ An error occurred while verifying.", ephemeral: true });
+    if (interaction.commandName === "verifycode") {
+    const code = interaction.options.getString("code").toUpperCase();
+    const discordId = interaction.options.getString("discord_id");
+
+    const connection = await pool.getConnection();
+    try {
+      // Check if code exists and is not expired
+      const [rows] = await connection.execute(
+        `SELECT mta_serial, ip, nickname FROM verification_attempts WHERE code = ? AND expires_at > NOW() LIMIT 1`,
+        [code]
+      );
+
+      if (rows.length === 0) {
+        await interaction.reply({ content: "❌ Invalid or expired code.", ephemeral: true });
+        return;
       }
 
-      } finally {
-        connection.release();
-      }
+      const { mta_serial, ip, nickname } = rows[0];
+
+      // Move to verified_players
+      await connection.execute(
+        `INSERT INTO verified_players (mta_serial, discord_id, ip, nickname, verified_at)
+         VALUES (?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE discord_id = VALUES(discord_id), ip = VALUES(ip), nickname = VALUES(nickname), verified_at = NOW()`,
+        [mta_serial, discordId, ip, nickname]
+      );
+
+      // Remove from verification_attempts
+      await connection.execute(
+        `DELETE FROM verification_attempts WHERE code = ?`,
+        [code]
+      );
+
+      await interaction.reply({ content: `✅ Successfully verified serial \`${mta_serial}\` for <@${discordId}>.`, ephemeral: true });
+    } catch (err) {
+      console.error("[verifycode] Error:", err);
+      await interaction.reply({ content: "❌ An error occurred while verifying.", ephemeral: true });
+    } finally {
+      connection.release();
     }
-  } catch (err) {
-    logError("interactionHandler", err, interaction);
-    if (interaction.isRepliable())
-      await safeReply(interaction, "❌ Something went wrong");
-  } finally {
-    connection.release();
   }
 });
 
