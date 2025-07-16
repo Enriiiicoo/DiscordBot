@@ -294,9 +294,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         );
     
         await interaction.reply({ content: `✅ Successfully verified serial \`${mta_serial}\` for <@${discordId}>.`, ephemeral: true });
-      } catch (err) {
-        console.error(err);
+      catch (err) {
+        console.error("[verifycode] Error:", err);
         await interaction.reply({ content: "❌ An error occurred while verifying.", ephemeral: true });
+      }
+
       } finally {
         connection.release();
       }
