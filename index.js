@@ -261,35 +261,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // --- COMMAND: verifycode ---
     if (interaction.isCommand() && interaction.commandName === "verifycode") {
-      if (!hasAdminRole(interaction.member)) {
-        return safeReply(interaction, "❌ You don't have permission to use this command.");
-      }
-
-      const code = interaction.options.getString("code");
+      const code = interaction.options.getString("code").toUpperCase();
       const discordId = interaction.options.getString("discord_id");
-
-      if (!code || !discordId) {
-        return safeReply(interaction, "❌ You must provide both the code and the Discord ID.");
-      }
-
+    
+      const connection = await pool.getConnection();
       try {
-        // Call MTA server API for verification:
-        // Replace with your MTA server HTTP API URL
-        const response = await axios.post(`http://${MTA_SERVER.host}:11970/verify-code`, {
-          code,
-          discordId,
-        }, {
-          timeout: 5000,
-        });
-
-        if (response.data.success) {
-          await interaction.reply(`✅ Verification succeeded for Discord ID <@${discordId}> with code \`${code}\`.`);
-        } else {
-          await interaction.reply(`❌ Verification failed: ${response.data.message}`);
+        // Check if code exists and is not expired
+        const [rows] = await connection.execute(
+          `SELECT mta_serial, ip, nickname FROM verification_attempts WHERE code = ? AND expires_at > NOW() LIMIT 1`,
+          [code]
+        );
+    
+        if (rows.length === 0) {
+          await interaction.reply({ content: "❌ Invalid or expired code.", ephemeral: true });
+          return;
         }
-      } catch (error) {
-        console.error("Verification API error:", error);
-        await interaction.reply("❌ Error contacting the MTA server for verification.");
+    
+        const { mta_serial, ip, nickname } = rows[0];
+    
+        // Move to verified_players
+        await connection.execute(
+          `INSERT INTO verified_players (mta_serial, discord_id, ip, nickname, verified_at)
+           VALUES (?, ?, ?, ?, NOW())
+           ON DUPLICATE KEY UPDATE discord_id = VALUES(discord_id), ip = VALUES(ip), nickname = VALUES(nickname), verified_at = NOW()`,
+          [mta_serial, discordId, ip, nickname]
+        );
+    
+        // Remove from verification_attempts
+        await connection.execute(
+          `DELETE FROM verification_attempts WHERE code = ?`,
+          [code]
+        );
+    
+        await interaction.reply({ content: `✅ Successfully verified serial \`${mta_serial}\` for <@${discordId}>.`, ephemeral: true });
+      } catch (err) {
+        console.error(err);
+        await interaction.reply({ content: "❌ An error occurred while verifying.", ephemeral: true });
+      } finally {
+        connection.release();
       }
     }
   } catch (err) {
@@ -373,17 +382,17 @@ client.on("ready", async () => {
             {
               name: "code",
               description: "The code shown to the player in-game",
-              type: 3,
+              type: 3, // STRING
               required: true,
             },
             {
               name: "discord_id",
               description: "Discord user ID to link",
-              type: 3,
+              type: 3, // STRING
               required: true,
             },
           ],
-        },
+        }
       ],
       process.env.GUILD_ID
     );
@@ -405,3 +414,16 @@ client.login(process.env.DISCORD_TOKEN).catch((error) => {
   logError("botLogin", error);
   process.exit(1);
 });
+async function cleanupExpiredAttempts() {
+  const connection = await pool.getConnection();
+  try {
+    await connection.execute(`DELETE FROM verification_attempts WHERE expires_at <= NOW()`);
+  } catch (err) {
+    console.error("Cleanup error:", err);
+  } finally {
+    connection.release();
+  }
+}
+
+// Run every 10 minutes
+setInterval(cleanupExpiredAttempts, 10 * 60 * 1000);
